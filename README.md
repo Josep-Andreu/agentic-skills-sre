@@ -14,18 +14,11 @@ A detected CVE is not proof that a particular host is vulnerable. A successful a
 
 This **minimal, sanitized lab reference** demonstrates a host-scoped workflow connecting vulnerability context through MCP, human-in-the-loop decision gates, deterministic Ansible execution through AAP, and independent verification. It is **not** a turnkey production remediation system.
 
-```mermaid
-flowchart TD
-    A[Operator selects host + CVE] --> B[Validate vulnerability context via MCP]
-    B --> C[Approved read-only local applicability probe]
-    C --> D{Remediation necessary?}
-    D -->|No| E[Evidence: no action required]
-    D -->|Yes| F[Review plan + explicit approval]
-    F --> G[Approved Git changes + AAP project sync]
-    G --> H[Approved, single-host Ansible remediation]
-    H --> I[Separate read-only verification job]
-    I --> J[Audit verdict + private evidence]
-```
+<div align="center">
+
+![Agentic SRE Remediation Workflow](docs/images/agentic-sre-workflow.png)
+
+</div>
 
 ## What is included
 
