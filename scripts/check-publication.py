@@ -25,6 +25,8 @@ BAD_PATTERNS = {
 URL_RE = re.compile(r'(?i)https?://([^/\s<>)"\']+)')
 HOST_RE = re.compile(r'(?<![\w.])(?:[A-Za-z0-9-]+\.){2,}[A-Za-z]{2,}(?![\w.])')
 UUID_RE = re.compile(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.I)
+PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+MAX_PUBLIC_IMAGE_BYTES = 10 * 1024 * 1024
 
 def scan():
     issues=[]
@@ -33,6 +35,35 @@ def scan():
         if not p.is_file() or any(x in EXCLUDE_DIRS for x in p.relative_to(ROOT).parts):
             continue
         rel=p.relative_to(ROOT)
+        # The README illustration is allowed only in its documented directory.
+        # A PNG still requires human review of its visible content and provenance.
+        if (p.suffix.lower() == '.png' and rel.parts[:2] == ('docs', 'images')
+                and not any(x in PRIVATE_DIRS for x in rel.parts)):
+            data = p.read_bytes()
+            if not data.startswith(PNG_SIGNATURE) or len(data) > MAX_PUBLIC_IMAGE_BYTES:
+                issues.append((str(rel), 'invalid or oversized public PNG'))
+            else:
+                # Reject common text/EXIF chunks that may contain sensitive metadata.
+                # Other binary chunks (including content provenance) require manual review.
+                import struct
+                offset = 8
+                forbidden = {b'tEXt', b'iTXt', b'zTXt', b'eXIf'}
+                png_bad = False
+                ended = False
+                while offset + 12 <= len(data):
+                    chunk_len = struct.unpack('>I', data[offset:offset+4])[0]
+                    chunk_type = data[offset+4:offset+8]
+                    if chunk_type in forbidden or offset + 12 + chunk_len > len(data):
+                        png_bad = True
+                        break
+                    offset += 12 + chunk_len
+                    if chunk_type == b'IEND':
+                        ended = True
+                        break
+                if png_bad or not ended or offset != len(data):
+                    issues.append((str(rel), 'PNG metadata or integrity requires manual cleanup'))
+            files += 1
+            continue
         if any(x in PRIVATE_DIRS for x in rel.parts) or p.suffix.lower() in DANGEROUS_SUFFIXES:
             issues.append((str(rel), 'private report/artifact or risky file type'))
             continue

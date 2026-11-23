@@ -12,7 +12,7 @@ Orchestrator: `/agentic-sre-remediate`. Prefer these skills over ad-hoc MCP.
 | Lightspeed vuln playbook YAML | `/playbook-generator` (Remediations MCP) |
 | If Remediations MCP down | Reuse or author playbook in git repo; mandatory human review of applicability, packages, advisory, idempotency, host scope |
 | Commit/push playbooks | Git with Gate 3 approval only |
-| AAP project SCM sync | `/aap-project-sync` |
+| AAP project SCM sync | Bundled `/aap-project-sync` (`.cursor/skills/aap-project-sync/SKILL.md`), using shared helper `scripts/aap_project_sync.py` and required Git SHA check |
 | Create JT guidance | `/job-template-creator` or AAP MCP `job_templates_create` when available |
 | JT ready for remediate | `/job-template-remediation-validator` |
 | Launch/monitor jobs | `/playbook-executor` patterns **plus** this skill’s gates (probe / remediate / verify are separate) |

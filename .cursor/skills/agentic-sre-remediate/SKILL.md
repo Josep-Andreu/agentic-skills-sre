@@ -94,7 +94,7 @@ Delegate; do not reinvent. See [references/05-skill-map.md](references/05-skill-
 | CVE validity / remediability | `/cve-validation` (+ optional `/cve-impact`) |
 | Host / deployment context | `/system-context`, inventory find/list tools via skill rules |
 | Playbook from Lightspeed | `/playbook-generator` when Remediations MCP available |
-| AAP project sync | `/aap-project-sync` after approved push |
+| AAP project sync | Bundled `/aap-project-sync` after approved push; require approved revision match |
 | JT suitability | `/job-template-remediation-validator`; create via MCP or `/job-template-creator` |
 | Launch / monitor jobs | `/playbook-executor` patterns (still respect **this** skill’s gates) |
 | Lightspeed post-check | `/remediation-verifier` patterns + eval/upload timeline rules here |
@@ -173,9 +173,9 @@ Using **local** evidence + Lightspeed context:
 
 1. Show paths and diff summary.
 2. Obtain **Git approval** (gate 3).
-3. Commit/push only after approval. Never push secrets.
-4. Run `/aap-project-sync` for the configured project; verify playbook path via AAP playbooks list.
-5. On sync failure: stop.
+3. Commit/push only after approval. Never push secrets. Record the complete Git commit SHA that was actually pushed.
+4. Invoke the **bundled** `/aap-project-sync` skill (`.cursor/skills/aap-project-sync/SKILL.md`) for the configured Project, passing the approved full commit SHA and relative playbook path. Its shared helper is `scripts/aap_project_sync.py` with `--expected-revision`; then verify playbook visibility through AAP MCP.
+5. If the Project Update fails, the AAP `scm_revision` differs from the approved commit, or the playbook cannot be verified: **stop**. Never continue to JT creation/execution on unverified content.
 
 ### Phase 8 — Job Template
 

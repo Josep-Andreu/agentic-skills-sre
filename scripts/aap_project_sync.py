@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -108,7 +109,25 @@ def _request(
         raise RuntimeError(f"{type(exc).__name__} {method} {urlparse(url).path}: {msg}") from exc
 
 
-def sync_project(project_id: int, timeout_sec: int) -> dict[str, Any]:
+def _require_full_revision(value: str) -> str:
+    """Require a complete Git SHA rather than accepting ambiguous short prefixes."""
+    expected = value.strip().lower()
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected):
+        raise ValueError("Expected revision must be a full 40- or 64-character Git SHA")
+    return expected
+
+
+def _ensure_revision_matches(expected: str, observed: str | None) -> None:
+    """Fail closed when an SCM Project resolves to an unexpected commit."""
+    observed_normalized = (observed or "").strip().lower()
+    if observed_normalized != expected:
+        raise RuntimeError(
+            "AAP SCM revision mismatch: "
+            f"expected={expected[:12]} observed={observed_normalized[:12] or 'missing'}"
+        )
+
+
+def sync_project(project_id: int, timeout_sec: int, expected_revision: str | None = None) -> dict[str, Any]:
     token = _token()
     if not token:
         raise RuntimeError(
@@ -164,14 +183,20 @@ def sync_project(project_id: int, timeout_sec: int) -> dict[str, Any]:
         )
 
     _, project = _request("GET", f"{base}/api/controller/v2/projects/{project_id}/", token)
+    if expected_revision is not None:
+        _ensure_revision_matches(expected_revision, project.get("scm_revision"))
     print(
         f"Sync successful. Project status={project.get('status')} "
         f"revision={(project.get('scm_revision') or '')[:12]}"
+        + (" (approved revision matched)" if expected_revision is not None else "")
     )
+
     return {
         "project_id": project_id,
         "project_name": project.get("name"),
         "scm_revision": project.get("scm_revision"),
+        "expected_revision": expected_revision,
+        "revision_matches": (True if expected_revision is not None else None),
         "update_id": update_id,
         "status": project.get("status"),
     }
@@ -181,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Synchronize an AAP Controller Git project")
     parser.add_argument("--project-id", type=int, default=int(os.environ.get("AAP_PROJECT_ID", "0")))
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SEC)
+    parser.add_argument(
+        "--expected-revision",
+        help="Full approved Git commit SHA (40/64 hex); mismatch stops the workflow",
+    )
     parser.add_argument(
         "--credentials-file",
         type=Path,
@@ -214,7 +243,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"status={project.get('status')}"
             )
             return 0
-        result = sync_project(args.project_id, args.timeout)
+        expected_revision = (
+            _require_full_revision(args.expected_revision) if args.expected_revision else None
+        )
+        result = sync_project(args.project_id, args.timeout, expected_revision=expected_revision)
         print(json.dumps({"ok": True, **result}, indent=2))
         return 0
     except Exception as exc:  # noqa: BLE001
