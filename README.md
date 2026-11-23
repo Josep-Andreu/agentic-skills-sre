@@ -1,6 +1,6 @@
 <div align="center">
 
-# Agentic SRE: From Detection to Verified Remediation
+# Agentic SRE: From Detection to Automatic Remediation and Verifications
 
 **An AI agent can suggest a patch. Who verifies that the right host needs it — and that the fix actually worked?**
 
