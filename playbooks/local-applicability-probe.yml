@@ -1,0 +1,177 @@
+---
+# Generic, read-only RHEL RPM/advisory applicability evidence collector.
+# The operator approves this probe before it is launched from AAP.
+# This does not automatically label a CVE fixed, vulnerable, or non-applicable.
+# It gathers data for an independent, advisory-specific planning decision.
+# AAP Job Template MUST have an exact one-host limit.
+- name: Agentic SRE | Local Applicability Probe (read-only)
+  hosts: all
+  gather_facts: false
+  become: false
+  vars:
+    expected_hostname: ""  # REQUIRED: exact Ansible inventory hostname
+    target_cve: ""         # REQUIRED: CVE-YYYY-NNNN...
+    target_advisory: ""    # REQUIRED: RHSA-YYYY:NNNN...
+    target_packages: []    # REQUIRED: list of RPM names
+    # Optional advisory-confirmed fixed EVRs for operator/agent review.
+    # The probe does NOT compare EVRs using lexical/semantic version ordering.
+    fixed_evr_by_package: {}
+
+  tasks:
+    - name: Preflight | Refuse broad target scope and invalid parameters
+      ansible.builtin.assert:
+        that:
+          - expected_hostname is string
+          - expected_hostname | length > 0
+          - inventory_hostname == expected_hostname
+          - ansible_play_hosts_all | length == 1
+          - target_cve is string
+          - target_cve is match('^CVE-[0-9]{4}-[0-9]{4,}$')
+          - target_advisory is string
+          - target_advisory is match('^RHSA-[0-9]{4}:[0-9]+$')
+          - target_packages is sequence
+          - target_packages is not string
+          - target_packages | length > 0
+          - (target_packages | select('match', '^[A-Za-z0-9][A-Za-z0-9+_.-]*$') | list | length) == (target_packages | length)
+          - (target_packages | unique | list | length) == (target_packages | length)
+          - fixed_evr_by_package is mapping
+          - (fixed_evr_by_package.keys() | list | difference(target_packages) | length) == 0
+        fail_msg: >-
+          Refusing probe: require one exact target host (AAP limit AND
+          expected_hostname), valid CVE/RHSA IDs and a non-empty unique
+          package list. Do not query unexpected hosts.
+      tags: [preflight, probe]
+
+    - name: Probe | Confirm effective UID with configured AAP become credentials
+      ansible.builtin.command:
+        argv: [id, -u]
+      become: true
+      register: privilege_uid
+      changed_when: false
+      tags: [probe]
+
+    - name: Preflight | Refuse missing privilege escalation
+      ansible.builtin.assert:
+        that:
+          - privilege_uid.stdout | trim == '0'
+        fail_msg: >-
+          Expected effective UID 0 through AAP become credentials.
+          This does not prove passwordless sudo.
+      tags: [preflight, probe]
+
+    - name: Probe | Collect limited operating system facts
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - 'min'
+      register: probe_facts
+      changed_when: false
+      tags: [probe]
+
+    - name: Probe | Capture running kernel release
+      ansible.builtin.command:
+        argv: [uname, -r]
+      register: kernel_release
+      changed_when: false
+      tags: [probe]
+
+    - name: Probe | Query installed RPM NEVRAs for advisory packages
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - -q
+          - --qf
+          - '%{NAME} %{EPOCH}:%{VERSION}-%{RELEASE}.%{ARCH}\n'
+          - '{{ item }}'
+      loop: '{{ target_packages }}'
+      register: rpm_queries
+      changed_when: false
+      failed_when: false  # Return code remains visible in structured evidence.
+      tags: [probe]
+
+    - name: Probe | Query cached DNF updates for this security advisory
+      ansible.builtin.command:
+        argv:
+          - dnf
+          - --cacheonly
+          - -q
+          - updateinfo
+          - list
+          - updates
+          - --advisory
+          - '{{ target_advisory }}'
+      register: advisory_updates
+      changed_when: false
+      failed_when: false  # No cache or metadata failure => inconclusive, not safe.
+      tags: [probe]
+
+    - name: Evidence | Initialize package observations
+      ansible.builtin.set_fact:
+        package_observations: []
+      tags: [probe]
+
+    - name: Evidence | Preserve package query results with exit codes
+      ansible.builtin.set_fact:
+        package_observations: >-
+          {{ package_observations + [{
+             'name': item.item,
+             'query_rc': item.rc,
+             'installed_query_succeeded': (item.rc == 0),
+             'rpm_nevras': item.stdout_lines | default([]),
+             'query_stderr': item.stderr | default('')
+          }] }}
+      loop: '{{ rpm_queries.results }}'
+      loop_control:
+        label: '{{ item.item }}'
+      tags: [probe]
+
+    - name: Evidence | Build conservative read-only probe result
+      ansible.builtin.set_fact:
+        agentic_probe: >-
+          {{ {
+            'schema_version': 1,
+            'host': inventory_hostname,
+            'cve': target_cve,
+            'advisory': target_advisory,
+            'privilege_uid': privilege_uid.stdout | trim,
+            'kernel_release': kernel_release.stdout | trim,
+            'os': ansible_facts.get('distribution', 'unknown'),
+            'os_version': ansible_facts.get('distribution_version', 'unknown'),
+            'architecture': ansible_facts.get('architecture', 'unknown'),
+            'packages': package_observations,
+            'advisory_confirmed_fixed_evrs': fixed_evr_by_package,
+            'advisory_cache_query': {
+              'command': 'dnf --cacheonly -q updateinfo list updates --advisory',
+              'rc': advisory_updates.rc,
+              'stdout': advisory_updates.stdout | default(''),
+              'stderr': advisory_updates.stderr | default('')
+            },
+            'evidence_status': (
+              'COLLECTED' if
+              (advisory_updates.rc == 0 and
+               (rpm_queries.results | selectattr('rc', 'equalto', 0) | list | length)
+                == (target_packages | length))
+              else 'PARTIAL'
+            ),
+            'planning_decision': 'REVIEW_REQUIRED',
+            'notes': [
+              'RPM and cached DNF outputs do not prove CVE applicability by themselves.',
+              'A missing advisory from cached DNF results is NOT proof of remediation.',
+              'Apply advisory-specific epoch-aware EVR checks and context checks before NO_ACTION_REQUIRED.',
+              'Kernel, configuration and runtime CVEs may require additional approved probes.'
+            ]
+          } }}
+      tags: [probe]
+
+    - name: Evidence | Publish structured summary in AAP job output
+      ansible.builtin.debug:
+        var: agentic_probe
+      tags: [probe]
+
+    - name: Evidence | Return machine-readable AAP job artifacts
+      ansible.builtin.set_stats:
+        data:
+          agentic_probe: '{{ agentic_probe }}'
+        per_host: true
+        aggregate: false
+      tags: [probe]

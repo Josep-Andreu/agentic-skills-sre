@@ -135,13 +135,27 @@ required approval is recorded.
 
 ### Phase 4 — Fresh local applicability (read-only)
 
-1. Present what the probe will check (packages/advisory/`uname`/services as relevant). **No changes.**
+1. Present the specific local checks planned for this CVE. **No changes.**
 2. Obtain **Probe approval** (gate 1). If denied → stop.
-3. Launch **read-only** AAP evidence collection limited to the target host only
-   (prefer existing verification / privilege-check style playbooks parameterized for this CVE,
-   or a minimal read-only probe JT). Never install/reboot in this phase.
-4. Parse current local package/advisory/service evidence.
-5. Historical jobs may be cited as background only.
+3. For RPM/advisory cases, prefer a **preconfigured, already synchronized** AAP Job
+   Template using `playbooks/local-applicability-probe.yml` from this repository.
+   Pass `expected_hostname` (exact AAP inventory hostname), `target_cve`,
+   `target_advisory`, `target_packages`, and optional advisory-confirmed
+   `fixed_evr_by_package`. Enforce an **exact one-host AAP Limit**. The probe
+   itself checks scope and privilege escalation (`id -u`). Never install/reboot.
+   If no suitable read-only JT is configured, stop for setup or select another
+   previously approved read-only probe; do not improvise arbitrary shell commands.
+4. For kernel/runtime, service, configuration, or non-RPM vulnerabilities,
+   collect additional **CVE-specific, approved, read-only** evidence; generic
+   RPM observations alone do not establish applicability.
+5. Parse structured `agentic_probe` evidence from AAP. `COLLECTED` only means
+   queries ran, **not** that the host is fixed. Missing cached DNF advisory
+   entries, unknown RPM versions, or partial results cannot justify
+   `NO_ACTION_REQUIRED`. If evidence is insufficient, stop and report
+   `INCONCLUSIVE` (evidence collection outcome, not a remediation verdict).
+6. Evaluate with the validated advisory, epoch-aware RPM EVR comparisons and
+   product/OS/runtime applicability before planning `REMEDIATE` or
+   `NO_ACTION_REQUIRED`. Historical jobs are context only.
 
 ### Phase 5 — Planning decision
 
